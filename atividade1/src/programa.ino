@@ -1,0 +1,246 @@
+/*
+  FarmTech Solutions - Fase 2 - Irrigação Inteligente (Soja)
+  Conversão de MicroPython para C++ (Arduino/ESP32)
+
+  Dependências (esta versão):
+    - Adafruit DHT sensor library
+    - Adafruit Unified Sensor
+
+  Observações de hardware:
+    - ESP32: PIN 34 é somente entrada (ok para ADC).
+    - Ajuste RELAY_ACTIVE_LOW conforme o módulo de relé utilizado.
+*/
+
+#include <Arduino.h>
+#include <DHT.h>
+#include <utility>   // std::pair
+
+// =========================== CONFIGURAÇÃO DOS PINOS ===========================
+constexpr uint8_t PIN_N      = 18;
+constexpr uint8_t PIN_P      = 19;
+constexpr uint8_t PIN_K      = 21;
+constexpr uint8_t PIN_DHT    = 15;   // DHT22
+constexpr uint8_t PIN_LDR    = 34;   // ADC para "pH" (simulado por LDR no protótipo)
+constexpr uint8_t PIN_RELAY  = 27;   // Saída para relé
+
+// =========================== CONFIGURAÇÃO DO SISTEMA ==========================
+constexpr float HUM_ON            = 40.0f;      // liga se umidade < 40%
+constexpr bool  USE_PH_RULE       = true;       // exigir pH na faixa
+constexpr float PH_MIN            = 5.5f;
+constexpr float PH_MAX            = 6.8f;
+constexpr bool  RELAY_ACTIVE_LOW  = false;      // true se o relé for ativo em LOW
+constexpr uint32_t DEBOUNCE_MS    = 120;
+
+// ========================= Temperatura (emergências) ==========================
+constexpr float TEMP_VERY_HOT      = 40.0f;     // calor extremo
+constexpr float TEMP_HOT           = 36.0f;     // calor forte
+constexpr float HOT_EMERG_ON2      = 55.0f;     // umidade p/ emergência calor extremo
+constexpr float HOT_EMERG_ON1      = 45.0f;     // umidade p/ emergência calor
+constexpr float TEMP_VERY_COLD     = 10.0f;     // frio extremo
+constexpr float COLD_BLOCK_MIN_HUM = 20.0f;     // bloqueia se >= 20% no frio extremo
+
+// ================================ ESTRUTURAS ==================================
+struct BtnState {
+  int       lastLevel   = HIGH; // último nível lido (com PULLUP)
+  uint32_t  lastEdgeMs  = 0;    // tempo do último clique aceito (debounce)
+};
+
+struct Decisao {
+  bool   ligar;
+  String motivo;
+};
+
+// ================================ HARDWARE ====================================
+// Adafruit DHT
+#define DHTTYPE DHT22
+DHT dht(PIN_DHT, DHTTYPE);
+
+// Estados globais
+BtnState btnN_state, btnP_state, btnK_state;
+volatile float ph_offset = 0.0f; // aparece como "Ajuste pH"
+
+// ============================== PROTÓTIPOS ====================================
+inline void relayOn();
+inline void relayOff();
+
+std::pair<bool, bool> edgePressed(uint8_t pin, BtnState& st);
+void  lerBotoesEAjustarPh(bool& isN, bool& isP, bool& isK);
+std::pair<float,float> lerUmidadeTemp();
+float lerPh();
+Decisao deveLigarBomba(float hum, float temp, float ph);
+
+// =============================== ARDUINO SETUP ================================
+void setup() {
+  Serial.begin(115200);
+  delay(200);
+
+  // Botões com PULLUP (acionamento para GND)
+  pinMode(PIN_N, INPUT_PULLUP);
+  pinMode(PIN_P, INPUT_PULLUP);
+  pinMode(PIN_K, INPUT_PULLUP);
+
+  // Relé
+  pinMode(PIN_RELAY, OUTPUT);
+  relayOff();
+
+  // DHT22 (Adafruit)
+  dht.begin();
+
+  // ADC do ESP32 (opcional, mas recomendado)
+  // Ajusta atenuação para 11dB (faixa ~0..3,3 V)
+  analogSetPinAttenuation(PIN_LDR, ADC_11db);
+
+  Serial.println("====================== FarmTech Solutions - Fase 2 - Irrigação Inteligente (Soja) ======================");
+  Serial.println();
+  // Serial.println("                              N: pH -0.2 | K: pH +0.2 | P: sem efeito");
+}
+
+// =================================== LOOP ====================================
+void loop() {
+  bool nPress=false, pPress=false, kPress=false;
+  lerBotoesEAjustarPh(nPress, pPress, kPress);
+
+  std::pair<float,float> th = lerUmidadeTemp();
+  float hum  = th.first;
+  float temp = th.second;
+
+  float ph = lerPh();
+
+  Decisao d = deveLigarBomba(hum, temp, ph);
+  if (d.ligar) relayOn();
+  else         relayOff();
+
+  // Log formatado
+  String humStr = isnan(hum)  ? String("--") : (String(hum, 1) + "%");
+  String tmpStr = isnan(temp) ? String("--") : (String(temp, 1) + "C");
+
+  auto padLeft = [](String s, int w) {
+  while ((int)s.length() < w) s = " " + s;
+  return s;
+  };
+  
+  auto padRight = [](String s, int w) {
+    while ((int)s.length() < w) s += " ";
+    return s;
+  };
+
+  String line;
+  line.reserve(160);
+  line  = "N="; line += nPress ? 1 : 0;
+  line += " P="; line += pPress ? 1 : 0;
+  line += " K="; line += kPress ? 1 : 0;
+  line += " | pH=";        line += padLeft(String(ph, 2), 5);      // ex.: " 3.42"
+  line += " | Ajuste pH="; line += padLeft(String(ph_offset, 1), 4); // ex.: " 0.0"
+  line += " | Umi=";       line += padLeft(humStr, 6);             // ex.: " 40.0%"
+  line += " | Temp=";      line += padLeft(tmpStr, 6);             // ex.: " 24.0C"
+  line += " | Bomba=";     line += padRight((d.ligar ? "ON" : "OFF"), 3);
+  line += " -> ";          line += d.motivo;
+  Serial.println(line);
+
+  Serial.flush();
+
+  delay(1000);
+}
+
+// ============================ IMPLEMENTAÇÕES ==================================
+
+// Utilidades de RELÉ
+inline void relayOn()  { digitalWrite(PIN_RELAY, RELAY_ACTIVE_LOW ? LOW  : HIGH); }
+inline void relayOff() { digitalWrite(PIN_RELAY, RELAY_ACTIVE_LOW ? HIGH : LOW ); }
+
+// Leitura com debounce.
+// Retorna (houveClique, estaPressionado)
+std::pair<bool, bool> edgePressed(uint8_t pin, BtnState& st) {
+  uint32_t now   = millis();
+  int level      = digitalRead(pin);          // PULLUP => pressionado = LOW
+  bool pressedNow= (level == LOW);
+  bool edge      = (level == LOW && st.lastLevel == HIGH &&
+                    (now - st.lastEdgeMs) > DEBOUNCE_MS);
+  if (edge) st.lastEdgeMs = now;
+  st.lastLevel = level;
+  return std::make_pair(edge, pressedNow);
+}
+
+void lerBotoesEAjustarPh(bool& isN, bool& isP, bool& isK) {
+  std::pair<bool,bool> epN = edgePressed(PIN_N, btnN_state);
+  std::pair<bool,bool> epP = edgePressed(PIN_P, btnP_state);
+  std::pair<bool,bool> epK = edgePressed(PIN_K, btnK_state);
+
+  bool cN = epN.first; bool pN = epN.second;
+  bool cP = epP.first; bool pP = epP.second;
+  bool cK = epK.first; bool pK = epK.second;
+
+  if (cN) ph_offset -= 0.2f;
+  if (cK) ph_offset += 0.2f;
+
+  // limita offset para manter pH final 0..14
+  if (ph_offset > 14.0f)  ph_offset = 14.0f;
+  if (ph_offset < -14.0f) ph_offset = -14.0f;
+
+  isN = pN; isP = pP; isK = pK;
+}
+
+// (umidade, temperatura) com Adafruit DHT
+std::pair<float, float> lerUmidadeTemp() {
+  float hum  = dht.readHumidity();
+  float temp = dht.readTemperature(); // °C
+  if (isnan(hum) || isnan(temp)) {
+    return std::make_pair(NAN, NAN);
+  }
+  return std::make_pair(hum, temp);
+}
+
+// "pH" do ADC (0..4095 → 0..14) + offset
+float lerPh() {
+  int raw = analogRead(PIN_LDR);              // ESP32 default: 0..4095
+  float ph = (static_cast<float>(raw) / 4095.0f) * 14.0f + ph_offset;
+  if (ph < 0.0f)  ph = 0.0f;
+  if (ph > 14.0f) ph = 14.0f;
+  return ph;
+}
+
+// Regras de decisão (emergências e condição padrão)
+Decisao deveLigarBomba(float hum, float temp, float ph) {
+  if (isnan(hum)) {
+    return {false, String("sem leitura de umidade")};
+  }
+
+  // Frio extremo: bloqueia (salvo seca severa)
+  if (!isnan(temp) && temp <= TEMP_VERY_COLD) {
+    if (hum < COLD_BLOCK_MIN_HUM) {
+      return {true, String("EMERGÊNCIA: frio extremo e umidade < ") + String((int)COLD_BLOCK_MIN_HUM) + "%"};
+    }
+    return {false, String("bloqueio: frio extremo (<= ") + String((int)TEMP_VERY_COLD) + "C) e umidade >= " + String((int)COLD_BLOCK_MIN_HUM) + "%"};
+  }
+
+  // Calor forte/extremo: liga emergencialmente (ignora pH)
+  if (!isnan(temp)) {
+    if (temp >= TEMP_VERY_HOT && hum < HOT_EMERG_ON2) {
+      return {true, String("EMERGÊNCIA: calor extremo (>= ") + String((int)TEMP_VERY_HOT) + "C) e umidade < " + String((int)HOT_EMERG_ON2) + "%"};
+    }
+    if (temp >= TEMP_HOT && hum < HOT_EMERG_ON1) {
+      return {true, String("EMERGÊNCIA: calor forte (>= ") + String((int)TEMP_HOT) + "C) e umidade < " + String((int)HOT_EMERG_ON1) + "%"};
+    }
+  }
+
+  // Regra padrão (exige pH se ativado)
+  if (USE_PH_RULE && !(ph >= PH_MIN && ph <= PH_MAX)) {
+    char buf[48];
+    snprintf(buf, sizeof(buf), "pH fora (alvo %.1f–%.1f)", PH_MIN, PH_MAX);
+    return {false, String(buf)};
+  }
+
+  if (hum < HUM_ON) {
+    char buf[40];
+    snprintf(buf, sizeof(buf), "liga: Umi %.1f%% < %.0f%%", hum, HUM_ON);
+    return {true, String(buf)};
+  }
+
+  char buf[48];
+  snprintf(buf, sizeof(buf), "aguarda: Umi %.1f%% >= %.0f%%", hum, HUM_ON);
+  // snprintf(buf, sizeof(buf), "aguarda: Umi %.1f%% \xE2\x89\xA5 %.0f%%", hum, HUM_ON); // "≥"
+  return {false, String(buf)};
+}
+
+
+
