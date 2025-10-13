@@ -40,6 +40,8 @@ O projeto foi desenvolvido no **Visual Studio Code** com **PlatformIO** e simula
 > O **sensor de pH é simulado no circuito pelo sensor LDR**, apenas como uma representação analógica capaz de variar valores conforme estímulo.  
 > Essa escolha permite simular leituras contínuas, como seria feito por um sensor de pH real em campo.
 
+<img width="1920" height="1032" alt="circuito" src="https://github.com/user-attachments/assets/97df0ae0-2d01-4a18-ac21-5bd68746dd8d" />
+
 ---
 
 ##  Lógica e Funcionamento do Sistema
@@ -95,6 +97,8 @@ if (umidade < 40 || ph < 6.0 || botaoN == HIGH || botaoP == HIGH || botaoK == HI
     digitalWrite(rele, LOW);    // Desliga irrigação
 }
 ```
+
+<img width="1920" height="1032" alt="circuito em execução" src="https://github.com/user-attachments/assets/42a73ed1-d54a-447d-a32f-ae6954251e97" />
 
 ---
 
