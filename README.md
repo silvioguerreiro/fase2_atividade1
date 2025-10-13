@@ -56,11 +56,11 @@ O projeto foi desenvolvido no **Visual Studio Code** com **PlatformIO** e simula
    - Captura o estado dos botões NPK.
 
 3. **Processamento Lógico**  
-   - Se a **umidade** estiver baixa,  
-   - Ou o **pH** estiver fora da faixa ideal,  
-   - Ou algum **nutriente (NPK)** indicar carência,  
-   → o sistema **aciona o relé** (irrigação ON).  
-   Caso contrário, o relé é **desligado**.
+   - Se a Umidade estiver baixa,  
+   - Ou o pH estiver fora da faixa ideal,  
+   - Ou algum nutriente (NPK) indicar carência,  
+   → o sistema aciona o relé (irrigação ON).  
+   Caso contrário, o relé é desligado.
 
 4. **Monitoramento Serial**  
    - Exibe no terminal os valores coletados e o status do sistema.
