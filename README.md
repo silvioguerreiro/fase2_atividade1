@@ -7,7 +7,7 @@
 <br>
 
 # 📊 Fase 2 – 1TIAOS – Startup **FarmTech Solutions**  
-## **Sistema realiza a leitura de **temperatura, umidade, pH (simulado)** e **nutrientes (NPK)****
+## **Sistema Automatizado de Irrigação  FarmTech Solutions**
 
 ## 👨‍💻 Grupo 46
 
