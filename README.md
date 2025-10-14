@@ -193,9 +193,5 @@ firmware = ".pio/build/esp32/firmware.bin"
 
 ## 📋 Licença
 
-Este projeto foi desenvolvido exclusivamente para fins **acadêmicos** no âmbito do curso de **Análise e Desenvolvimento de Sistemas – FIAP**.
+Este projeto foi desenvolvido exclusivamente para fins **acadêmicos** – FIAP**.
 Qualquer uso, modificação ou redistribuição deve seguir as diretrizes institucionais e de propriedade intelectual aplicáveis.
-
-```
-também um **QR Code** apontando para o vídeo (para inserir no relatório final ou apresentação)? (Isso é excelente em apresentações acadêmicas e relatórios técnicos.)
-```
